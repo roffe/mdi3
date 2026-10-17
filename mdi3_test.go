@@ -71,3 +71,27 @@ func TestTheme(t *testing.T) {
 		t.Errorf("unmapped icon = %s, want Fyne fallback %s", got, want)
 	}
 }
+
+// Reference values from Material Theme Builder (tonal spot) and
+// material-color-utilities' SchemeFidelity tests.
+func TestSchemes(t *testing.T) {
+	blue := color.NRGBA{0, 0, 0xff, 0xff}
+	for _, tc := range []struct {
+		th   fyne.Theme
+		n    fyne.ThemeColorName
+		v    fyne.ThemeVariant
+		want color.NRGBA
+	}{
+		{New(nil), theme.ColorNamePrimary, theme.VariantLight, color.NRGBA{0x65, 0x55, 0x8f, 0xff}},
+		{New(nil), ColorNamePrimaryContainer, theme.VariantLight, color.NRGBA{0xe9, 0xdd, 0xff, 0xff}},
+		{New(nil), ColorNameOnPrimaryContainer, theme.VariantLight, color.NRGBA{0x4d, 0x3d, 0x75, 0xff}},
+		{New(nil), ColorNameSurface, theme.VariantDark, color.NRGBA{0x14, 0x12, 0x18, 0xff}},
+		{NewFidelity(blue), theme.ColorNamePrimary, theme.VariantLight, color.NRGBA{0x00, 0x01, 0xbb, 0xff}},
+		{NewFidelity(blue), ColorNamePrimaryContainer, theme.VariantLight, blue},
+		{NewFidelity(blue), theme.ColorNamePrimary, theme.VariantDark, color.NRGBA{0xbe, 0xc2, 0xff, 0xff}},
+	} {
+		if got := tc.th.Color(tc.n, tc.v); got != tc.want {
+			t.Errorf("%s variant %d = %v, want %v", tc.n, tc.v, got, tc.want)
+		}
+	}
+}

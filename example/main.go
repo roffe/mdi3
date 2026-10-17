@@ -1,5 +1,5 @@
-// Demo of the mdi3 theme. Pick a seed color and flip dark mode to see the
-// whole scheme regenerate.
+// Demo of the mdi3 theme. Pick a seed color, flip dark mode or the fidelity
+// scheme to see the whole scheme regenerate.
 package main
 
 import (
@@ -16,23 +16,27 @@ import (
 )
 
 var seeds = map[string]color.Color{
-	"Baseline": nil,
-	"Teal":     color.NRGBA{R: 0x00, G: 0x6a, B: 0x6a, A: 0xff},
-	"Green":    color.NRGBA{R: 0x38, G: 0x6a, B: 0x20, A: 0xff},
-	"Orange":   color.NRGBA{R: 0xff, G: 0x98, B: 0x00, A: 0xff},
-	"Red":      color.NRGBA{R: 0xb3, G: 0x26, B: 0x1e, A: 0xff},
-	"Blue":     color.NRGBA{R: 0x1e, G: 0x88, B: 0xe5, A: 0xff},
+	"Baseline":  nil,
+	"Teal":      color.NRGBA{R: 0x00, G: 0x6a, B: 0x6a, A: 0xff},
+	"Green":     color.NRGBA{R: 0x38, G: 0x6a, B: 0x20, A: 0xff},
+	"Orange":    color.NRGBA{R: 0xff, G: 0x98, B: 0x00, A: 0xff},
+	"Red":       color.NRGBA{R: 0xb3, G: 0x26, B: 0x1e, A: 0xff},
+	"Blue":      color.NRGBA{R: 0x1e, G: 0x88, B: 0xe5, A: 0xff},
+	"Deep blue": color.NRGBA{R: 0x0d, G: 0x47, B: 0xa1, A: 0xff},
 }
 
 type state struct {
-	seed string
-	dark bool
+	seed           string
+	dark, fidelity bool
 }
 
 func (s state) theme() fyne.Theme {
 	v := theme.VariantLight
 	if s.dark {
 		v = theme.VariantDark
+	}
+	if s.fidelity {
+		return forced{mdi3.NewFidelity(seeds[s.seed]), v}
 	}
 	return forced{mdi3.New(seeds[s.seed]), v}
 }
@@ -55,17 +59,20 @@ func main() {
 		a.Settings().SetTheme(s.theme())
 		w.SetContent(demo(s, apply)) // rebuilt so the swatches pick up the new colors
 	}
-	apply(state{"Baseline", a.Settings().ThemeVariant() == theme.VariantDark})
+	apply(state{seed: "Baseline", dark: a.Settings().ThemeVariant() == theme.VariantDark})
 	w.ShowAndRun()
 }
 
 func demo(s state, apply func(state)) fyne.CanvasObject {
-	seed := widget.NewSelect([]string{"Baseline", "Teal", "Green", "Orange", "Red", "Blue"}, nil)
+	seed := widget.NewSelect([]string{"Baseline", "Teal", "Green", "Orange", "Red", "Blue", "Deep blue"}, nil)
 	seed.Selected = s.seed
-	seed.OnChanged = func(name string) { apply(state{name, s.dark}) }
+	seed.OnChanged = func(name string) { s.seed = name; apply(s) }
 	dark := widget.NewCheck("Dark mode", nil)
 	dark.Checked = s.dark
-	dark.OnChanged = func(on bool) { apply(state{s.seed, on}) }
+	dark.OnChanged = func(on bool) { s.dark = on; apply(s) }
+	fidelity := widget.NewCheck("Fidelity", nil)
+	fidelity.Checked = s.fidelity
+	fidelity.OnChanged = func(on bool) { s.fidelity = on; apply(s) }
 
 	placeholder := widget.NewEntry()
 	placeholder.SetPlaceHolder("Placeholder")
@@ -107,7 +114,7 @@ func demo(s state, apply func(state)) fyne.CanvasObject {
 	}
 
 	left := container.NewVBox(
-		container.NewHBox(seed, dark),
+		container.NewHBox(seed, dark, fidelity),
 		widget.NewRichTextFromMarkdown("# Material Design 3\n## Fyne theme\nRoboto body text with *italic* and **medium** weight."),
 		placeholder, entry, pick,
 		container.NewHBox(widget.NewButton("Tonal", nil), high, low, disabled),

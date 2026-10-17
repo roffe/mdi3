@@ -3,7 +3,8 @@ package mdi3
 // HCT (hue, chroma, tone) color space: CAM16 hue/chroma + CIE L* tone.
 // Port of the parts of Google's material-color-utilities (Apache 2.0) that
 // M3 scheme generation needs: CAM16 under default viewing conditions,
-// HctSolver and Blend.harmonize.
+// HctSolver, Blend.harmonize, Contrast, TemperatureCache.complement and
+// DislikeAnalyzer.
 
 import (
 	"image/color"
@@ -39,7 +40,8 @@ var (
 		{0.2126, 0.7152, 0.0722},
 		{0.01932141, 0.11916382, 0.95034478},
 	}
-	m16 = mat{
+	whiteD65 = vec{95.047, 100, 108.883}
+	m16      = mat{
 		{0.401288, 0.650173, -0.051461},
 		{-0.250268, 1.204414, 0.045854},
 		{-0.002079, 0.048952, 0.953127},
@@ -52,9 +54,8 @@ var vc = func() (v struct {
 	n, aw, nbb, ncb, c, nc, fl, z float64
 	rgbD                          vec
 }) {
-	white := vec{95.047, 100, 108.883}
 	la := 200 / math.Pi * yFromLstar(50) / 100
-	w := m16.mul(white)
+	w := m16.mul(whiteD65)
 	f := 1.0                                                           // 0.8 + surround/10
 	v.c = 0.69                                                         // lerp(0.59, 0.69, (f-0.9)*10)
 	d := math.Max(0, math.Min(1, f*(1-(1/3.6)*math.Exp((-la-42)/92)))) // degree of adaptation
@@ -64,7 +65,7 @@ var vc = func() (v struct {
 	k := 1 / (5*la + 1)
 	k4 := k * k * k * k
 	v.fl = k4*la + 0.1*(1-k4)*(1-k4)*math.Cbrt(5*la)
-	v.n = yFromLstar(50) / white[1]
+	v.n = yFromLstar(50) / whiteD65[1]
 	v.z = 1.48 + math.Sqrt(v.n)
 	v.nbb = 0.725 / math.Pow(v.n, 0.2)
 	v.ncb = v.nbb
@@ -141,12 +142,13 @@ func yFromLstar(l float64) float64 {
 	return 100 * (116*ft - 16) / labK
 }
 
-func lstarFromY(y float64) float64 {
-	t := y / 100
+func lstarFromY(y float64) float64 { return 116*labF(y/100) - 16 }
+
+func labF(t float64) float64 {
 	if t > labE {
-		return 116*math.Cbrt(t) - 16
+		return math.Cbrt(t)
 	}
-	return labK * t
+	return (labK*t + 16) / 116
 }
 
 func sanitizeDeg(d float64) float64 {
@@ -355,4 +357,101 @@ func harmonize(design, source hct) hct {
 	}
 	design.h = sanitizeDeg(design.h + rot)
 	return design
+}
+
+// contrast is the WCAG contrast ratio between two tones.
+func contrast(a, b float64) float64 {
+	ya := yFromLstar(math.Max(0, math.Min(100, a)))
+	yb := yFromLstar(math.Max(0, math.Min(100, b)))
+	return (math.Max(ya, yb) + 5) / (math.Min(ya, yb) + 5)
+}
+
+// foregroundTone is the tone closest to bg that reaches ratio against it,
+// preferring light text on dark backgrounds (DynamicColor.foregroundTone).
+func foregroundTone(bg, ratio float64) float64 {
+	l := lstarFromY(ratio*(yFromLstar(bg)+5)-5) + 0.4
+	if l < 0 || l > 100 {
+		l = 100
+	}
+	d := lstarFromY((yFromLstar(bg)+5)/ratio-5) - 0.4
+	if d < 0 || d > 100 {
+		d = 0
+	}
+	lr, dr := contrast(l, bg), contrast(d, bg)
+	if math.Round(bg) < 60 {
+		if lr >= ratio || lr >= dr || (math.Abs(lr-dr) < 0.1 && lr < ratio && dr < ratio) {
+			return l
+		}
+		return d
+	}
+	if dr >= ratio || dr >= lr {
+		return d
+	}
+	return l
+}
+
+// temperature is warmth in Lab: hue near 50° (orange) is warm, 230° cold.
+func temperature(h hct) float64 {
+	c := h.color()
+	l := vec{linearized(float64(c.R)), linearized(float64(c.G)), linearized(float64(c.B))}
+	xyz := xyzFromLinrgb.mul(l)
+	fx, fy, fz := labF(xyz[0]/whiteD65[0]), labF(xyz[1]/whiteD65[1]), labF(xyz[2]/whiteD65[2])
+	a, b := 500*(fx-fy), 200*(fy-fz)
+	hue := sanitizeDeg(math.Atan2(b, a) * 180 / math.Pi)
+	return -0.5 + 0.02*math.Pow(math.Hypot(a, b), 1.07)*math.Cos(sanitizeDeg(hue-50)*math.Pi/180)
+}
+
+// complement is the hue at s's chroma and tone whose relative warmth mirrors
+// s's, walking from the warm/cold extreme on the other side of the wheel.
+func complement(s hct) hct {
+	var byHue [361]hct
+	var temps [361]float64
+	sTemp := temperature(s)
+	cold, warm := sTemp, sTemp
+	coldH, warmH := s.h, s.h
+	for h := range byHue {
+		byHue[h] = hctOf(hct{float64(h), s.c, s.t}.color())
+		temps[h] = temperature(byHue[h])
+		if temps[h] < cold {
+			cold, coldH = temps[h], byHue[h].h
+		}
+		if temps[h] > warm {
+			warm, warmH = temps[h], byHue[h].h
+		}
+	}
+	rel := 0.5
+	if warm != cold {
+		rel = (sTemp - cold) / (warm - cold)
+	}
+	start, end := coldH, warmH
+	if hueBetween(s.h, coldH, warmH) {
+		start, end = warmH, coldH
+	}
+	answer, best := byHue[int(math.Round(s.h))], 1000.0
+	for add := 0.0; add <= 360; add++ {
+		h := sanitizeDeg(start + add)
+		if !hueBetween(h, start, end) {
+			continue
+		}
+		i := int(math.Round(h))
+		if e := math.Abs(1 - rel - (temps[i]-cold)/(warm-cold)); e < best {
+			answer, best = byHue[i], e
+		}
+	}
+	return answer
+}
+
+func hueBetween(h, a, b float64) bool {
+	if a < b {
+		return a <= h && h <= b
+	}
+	return a <= h || h <= b
+}
+
+// fixIfDisliked lightens dark yellow-greens (bile), which people dislike.
+func fixIfDisliked(h hct) hct {
+	if hue := math.Round(h.h); hue >= 90 && hue <= 111 && math.Round(h.c) > 16 && math.Round(h.t) < 65 {
+		return hctOf(hct{h.h, h.c, 70}.color())
+	}
+	return h
 }

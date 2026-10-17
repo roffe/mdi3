@@ -2,6 +2,7 @@ package mdi3
 
 import (
 	"image/color"
+	"math"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/theme"
@@ -79,8 +80,9 @@ const (
 )
 
 // roles are the M3 2021-spec standard contrast tones (with the 2024
-// tone-30 on*Container update) as {palette, light tone, dark tone}.
-// ponytail: fixed tones, port DynamicColor contrast curves if medium/high contrast schemes are needed.
+// tone-30 on*Container update) as {palette, light tone, dark tone}, before
+// the contrast rules in resolve.
+// ponytail: standard contrast only, port the full ContrastCurve tables if medium/high contrast schemes are needed.
 var roles = map[fyne.ThemeColorName]struct {
 	pal         int
 	light, dark float64
@@ -189,15 +191,18 @@ var (
 
 type tonal struct{ h, c float64 }
 
+// at returns the actual (gamut mapped) color at tone t.
+func (p tonal) at(t float64) hct { return hctOf(hct{p.h, p.c, t}.color()) }
+
 func customPalette(base color.Color, seed hct) tonal {
 	h := hctOf(harmonize(hctOf(base), seed).color())
 	return tonal{h.h, max(48, h.c)}
 }
 
-// scheme builds an M3 "tonal spot" scheme (the Android/Theme Builder default) from seed.
-func scheme(seed color.Color, dark bool) map[fyne.ThemeColorName]color.Color {
-	s := hctOf(seed)
-	pals := [...]tonal{
+// palettes returns the key palettes for seed. Tonal spot (the Android/Theme
+// Builder default) keeps only the seed's hue, fidelity keeps its chroma too.
+func palettes(s hct, fidelity bool) [8]tonal {
+	p := [...]tonal{
 		palPrimary:        {s.h, 36},
 		palSecondary:      {s.h, 16},
 		palTertiary:       {sanitizeDeg(s.h + 60), 24},
@@ -207,14 +212,48 @@ func scheme(seed color.Color, dark bool) map[fyne.ThemeColorName]color.Color {
 		palSuccess:        customPalette(successBase, s),
 		palWarning:        customPalette(warningBase, s),
 	}
+	if fidelity {
+		t := fixIfDisliked(complement(s))
+		p[palPrimary] = tonal{s.h, s.c}
+		p[palSecondary] = tonal{s.h, max(s.c-32, s.c*0.5)}
+		p[palTertiary] = tonal{t.h, t.c}
+		p[palNeutral] = tonal{s.h, s.c / 8}
+		p[palNeutralVariant] = tonal{s.h, s.c/8 + 4}
+	}
+	return p
+}
+
+// accentGroups are {accent, onAccent, container, onContainer}.
+var accentGroups = [][4]fyne.ThemeColorName{
+	{theme.ColorNamePrimary, ColorNameOnPrimary, ColorNamePrimaryContainer, ColorNameOnPrimaryContainer},
+	{ColorNameSecondary, ColorNameOnSecondary, ColorNameSecondaryContainer, ColorNameOnSecondaryContainer},
+	{ColorNameTertiary, ColorNameOnTertiary, ColorNameTertiaryContainer, ColorNameOnTertiaryContainer},
+	{theme.ColorNameError, ColorNameOnError, ColorNameErrorContainer, ColorNameOnErrorContainer},
+}
+
+func scheme(seed hct, pals [8]tonal, fidelity, dark bool) map[fyne.ThemeColorName]color.Color {
+	tones := make(map[fyne.ThemeColorName]float64, len(roles))
+	for n, r := range roles {
+		tones[n] = r.light
+		if dark {
+			tones[n] = r.dark
+		}
+	}
+	if fidelity { // containers follow the seed instead of fixed 90/30
+		tones[ColorNamePrimaryContainer] = seed.t
+		tones[ColorNameSecondaryContainer] = desiredChromaTone(pals[palSecondary], tones[ColorNameSecondaryContainer], !dark)
+		tones[ColorNameTertiaryContainer] = fixIfDisliked(pals[palTertiary].at(seed.t)).t
+		for _, g := range accentGroups[:3] {
+			tones[g[3]] = foregroundTone(tones[g[2]], 4.5)
+		}
+	}
+	for _, g := range accentGroups {
+		resolve(tones, g, dark)
+	}
 
 	m := make(map[fyne.ThemeColorName]color.Color, len(roles)+len(aliases)+len(stateLayers)+1)
 	for n, r := range roles {
-		t := r.light
-		if dark {
-			t = r.dark
-		}
-		m[n] = hct{pals[r.pal].h, pals[r.pal].c, t}.color()
+		m[n] = hct{pals[r.pal].h, pals[r.pal].c, tones[n]}.color()
 	}
 	for n, role := range aliases {
 		m[n] = m[role]
@@ -229,4 +268,65 @@ func scheme(seed color.Color, dark bool) map[fyne.ThemeColorName]color.Color {
 		m[theme.ColorNameShadow] = color.NRGBA{A: 0x77}
 	}
 	return m
+}
+
+// resolve applies M3's standard contrast rules to an accent group: accent
+// 4.5:1 against the highest surface, accent at least 10 tones further from
+// the surface than its container, no container in the muddy 50-59 tones, and
+// on-colors 4.5:1 against what they sit on. A no-op for tonal spot's fixed
+// tones, it's what makes fidelity's seed-toned containers work.
+func resolve(t map[fyne.ThemeColorName]float64, g [4]fyne.ThemeColorName, dark bool) {
+	bg, dir := 87.0, -1.0 // surfaceDim, accents go darker
+	if dark {
+		bg, dir = 24, 1 // surfaceBright, accents go lighter
+	}
+	a, c := t[g[0]], t[g[2]]
+	if contrast(bg, a) < 4.5 {
+		a = foregroundTone(bg, 4.5)
+	}
+	if (a-c)*dir < 10 {
+		a = math.Max(0, math.Min(100, c+10*dir))
+		if (a-c)*dir < 10 {
+			c = math.Max(0, math.Min(100, a-10*dir))
+		}
+	}
+	switch {
+	case c >= 50 && c < 60 && dir > 0:
+		c, a = 60, math.Max(a, 70)
+	case c >= 50 && c < 60:
+		c, a = 49, math.Min(a, 39)
+	case a >= 50 && a < 60 && dir > 0:
+		a = 60
+	case a >= 50 && a < 60:
+		a = 49
+	}
+	t[g[0]], t[g[2]] = a, c
+	for _, p := range [][2]fyne.ThemeColorName{{g[1], g[0]}, {g[3], g[2]}} {
+		if contrast(t[p[0]], t[p[1]]) < 4.5 {
+			t[p[0]] = foregroundTone(t[p[1]], 4.5)
+		}
+	}
+}
+
+// desiredChromaTone walks from tone toward the palette's chroma peak until
+// the color is about as chromatic as the palette asks for.
+func desiredChromaTone(p tonal, tone float64, down bool) float64 {
+	step := 1.0
+	if down {
+		step = -1
+	}
+	answer, closest := tone, p.at(tone)
+	peak := closest.c
+	for closest.c < p.c {
+		answer += step
+		h := p.at(answer)
+		if peak > h.c || math.Abs(h.c-p.c) < 0.4 {
+			break
+		}
+		if math.Abs(h.c-p.c) < math.Abs(closest.c-p.c) {
+			closest = h
+		}
+		peak = math.Max(peak, h.c)
+	}
+	return answer
 }

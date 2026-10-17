@@ -19,10 +19,10 @@ func TestSnapshots(t *testing.T) {
 	}
 	a := test.NewTempApp(t)
 	for file, s := range map[string]state{
-		"baseline-light": {"Baseline", false},
-		"baseline-dark":  {"Baseline", true},
-		"teal-light":     {"Teal", false},
-		"orange-dark":    {"Orange", true},
+		"baseline-light":          {seed: "Baseline"},
+		"baseline-dark":           {seed: "Baseline", dark: true},
+		"teal-light":              {seed: "Teal"},
+		"deep-blue-fidelity-dark": {seed: "Deep blue", dark: true, fidelity: true},
 	} {
 		a.Settings().SetTheme(s.theme()) // before demo(), the swatches read colors at build time
 		c := software.NewCanvas()

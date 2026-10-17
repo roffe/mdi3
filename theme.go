@@ -112,14 +112,24 @@ type m3 struct {
 	light, dark map[fyne.ThemeColorName]color.Color
 }
 
-// New returns an M3 theme with light and dark schemes generated from seed,
-// following the user's light/dark preference. A nil seed gives the M3
+// New returns an M3 "tonal spot" theme with light and dark schemes generated
+// from seed, following the user's light/dark preference. Only the seed's hue
+// is used, so any seed gives the same calm M3 look. A nil seed gives the M3
 // baseline (#6750A4).
-func New(seed color.Color) fyne.Theme {
+func New(seed color.Color) fyne.Theme { return newTheme(seed, false) }
+
+// NewFidelity returns an M3 "fidelity" theme: it keeps the seed's chroma and
+// uses the seed itself as the primary container, so a saturated brand color
+// stays saturated. Tertiary is the seed's temperature complement.
+func NewFidelity(seed color.Color) fyne.Theme { return newTheme(seed, true) }
+
+func newTheme(seed color.Color, fidelity bool) fyne.Theme {
 	if seed == nil {
 		seed = baseline
 	}
-	return &m3{light: scheme(seed, false), dark: scheme(seed, true)}
+	s := hctOf(seed)
+	p := palettes(s, fidelity)
+	return &m3{light: scheme(s, p, fidelity, false), dark: scheme(s, p, fidelity, true)}
 }
 
 func (t *m3) Color(n fyne.ThemeColorName, v fyne.ThemeVariant) color.Color {

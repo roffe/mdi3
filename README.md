@@ -8,7 +8,7 @@ Give it one seed color and it generates the full M3 light and dark schemes from 
 <img src="screenshots/baseline-light.png" width="49%" alt="Baseline seed, light">
 <img src="screenshots/baseline-dark.png" width="49%" alt="Baseline seed, dark">
 <img src="screenshots/teal-light.png" width="49%" alt="Teal seed, light">
-<img src="screenshots/orange-dark.png" width="49%" alt="Orange seed, dark">
+<img src="screenshots/deep-blue-fidelity-dark.png" width="49%" alt="Deep blue seed, fidelity scheme, dark">
 </p>
 
 ## Demo
@@ -17,7 +17,7 @@ Give it one seed color and it generates the full M3 light and dark schemes from 
 go run github.com/roffe/mdi3/example@latest
 ```
 
-Pick a seed color and flip dark mode to watch the whole scheme regenerate. The screenshots above come from the same demo, `go test ./example -update` renders them again.
+Pick a seed color, flip dark mode or the fidelity scheme and watch the whole thing regenerate. The screenshots above come from the same demo, `go test ./example -update` renders them again.
 
 ## Install
 
@@ -37,6 +37,20 @@ a.Settings().SetTheme(mdi3.New(nil))
 ```go
 a.Settings().SetTheme(mdi3.New(color.NRGBA{R: 0x00, G: 0x6a, B: 0x6a, A: 0xff}))
 ```
+
+## Tonal spot or fidelity
+
+`New` is M3's default "tonal spot" scheme. It only uses the hue of your seed, saturation and lightness are thrown away, so every seed gets the same calm M3 look. #1565C0, #0D47A1 and #003F88 all end up as pretty much the same dusty blue.
+
+If you want your brand color to actually show, use `NewFidelity`:
+
+```go
+a.Settings().SetTheme(mdi3.NewFidelity(color.NRGBA{R: 0x15, G: 0x65, B: 0xc0, A: 0xff}))
+```
+
+It keeps the seed's chroma, the seed itself becomes the primary container and tertiary is picked as the seed's warm/cold complement. Primary is kept at least 10 tones darker than the container in light mode (lighter in dark mode) so they don't blend together. So a dark seed gives an even darker primary, #0D47A1 gives #003178. For a deep blue primary around #0D47A1 use #1565C0 as seed, that lands on #004D99.
+
+## Light and dark
 
 Light or dark follows the user's preference just like the built in Fyne theme. Both schemes are generated once in `New`, after that every color lookup is a map read.
 
